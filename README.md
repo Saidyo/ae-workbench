@@ -121,9 +121,6 @@ node_modules/
 ## 文档
 
 - [用户指南](docs/USER_GUIDE.md)
-- [UI 优化工作流](docs/AE_UI_REFACTOR_WORKFLOW.md)
-- [产品说明](PRODUCT.md)
-- [功能设计](AE%20Workbench_%E5%8A%9F%E8%83%BD%E8%AE%BE%E8%AE%A1.md)
 
 ## 隐私说明
 
