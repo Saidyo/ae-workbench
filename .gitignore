@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-electron/
+data/
+Library/
+Projects/
+Cache/
+output/
+.claude/
+.playwright-cli/
+AE-Workbench-deploy-package/
+AE-Workbench-deploy-package.zip
+preview-*.png
+*.log
