@@ -82,6 +82,11 @@ if (-not $env:ELECTRON_MIRROR) {
 }
 npm install
 
+if (-not (Test-Path (Join-Path $root "node_modules\electron\dist\electron.exe"))) {
+  Write-Step "Repairing Electron runtime"
+  npm rebuild electron
+}
+
 Write-Step "Building desktop app"
 npm run build
 
@@ -96,6 +101,14 @@ if ($eagle.Connected) {
 }
 
 Write-Step "Launching AE Workbench"
+$packagedApp = Join-Path $root "release\win-unpacked\AE Workbench.exe"
+if (Test-Path $packagedApp) {
+  Start-Process -FilePath $packagedApp -WorkingDirectory (Split-Path -Parent $packagedApp) -WindowStyle Normal
+  Write-Host ""
+  Write-Host "Done. Packaged AE Workbench is starting." -ForegroundColor Green
+  return
+}
+
 $oldElectron = Get-CimInstance Win32_Process | Where-Object {
   $_.CommandLine -like ("*" + $root + "*") -and $_.CommandLine -like "*electron*"
 }

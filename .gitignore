@@ -6,6 +6,7 @@ Library/
 Projects/
 Cache/
 output/
+release/
 .claude/
 .playwright-cli/
 AE-Workbench-deploy-package/
