@@ -1,5 +1,5 @@
-name: Feature request
-description: Suggest an improvement for AE Workbench.
+name: 功能建议
+description: 为 AE Workbench 提出改进建议。
 title: "[Feature]: "
 labels:
   - enhancement
@@ -7,19 +7,19 @@ body:
   - type: textarea
     id: problem
     attributes:
-      label: Problem
-      description: What workflow problem should this solve?
+      label: 使用场景
+      description: 这个功能想解决什么工作流问题？
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: Proposal
-      description: What would you like AE Workbench to do?
+      label: 建议方案
+      description: 你希望 AE Workbench 如何支持这个功能？
     validations:
       required: true
   - type: textarea
     id: context
     attributes:
-      label: Additional context
-      description: Add references, screenshots, or workflow notes if useful.
+      label: 补充信息
+      description: 可以补充参考图、截图、使用流程或其他背景信息。

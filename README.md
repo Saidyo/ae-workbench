@@ -3,102 +3,102 @@
 [![CI](https://github.com/Saidyo/ae-workbench/actions/workflows/ci.yml/badge.svg)](https://github.com/Saidyo/ae-workbench/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-AE Workbench is a local desktop workstation for After Effects creators. It helps manage AE project folders, reference assets, images, videos, audio, PSD files, templates, delivery files, and Eagle library metadata in one visual workspace.
+AE Workbench 是一个面向 After Effects 创作者的本地桌面工作台，用来统一管理 AE 项目、人物立绘、图片素材、视频素材、音频、PSD、模板、交付文件和 Eagle 素材库信息。
 
-The app is built for local-first creative work. It indexes file paths and metadata, but it does not upload your assets or move your original Eagle files.
+它的设计目标是“本地优先”：素材仍然留在你的电脑里，系统只记录文件路径、分类、标签、时间、项目关联和预览信息，不会上传素材，也不会移动或修改 Eagle 原始文件。
 
-![AE Workbench overview](docs/images/ae-workbench-overview.png)
+![AE Workbench 界面预览](docs/images/ae-workbench-overview.png)
 
-## Features
+## 功能特性
 
-- Create and organize AE project folders.
-- Index local assets from `Library/`, `Projects/`, and linked external folders.
-- Preview images and videos directly in the asset library.
-- Associate files and folders with specific AE projects.
-- Import files into the current project with type-based folder mapping.
-- Track daily asset counts and recent import trends.
-- Sync Eagle metadata through the Eagle local API or a selected `.library` folder.
-- Keep Eagle sync read-only: no write-back, moving, deleting, or copying Eagle originals.
+- 创建并管理 AE 项目目录。
+- 索引 `Library/`、`Projects/` 和外部关联文件夹中的本地素材。
+- 在素材库中直接预览图片和视频。
+- 将文件或文件夹关联到指定 AE 项目。
+- 将素材导入当前项目，并按素材类型归入对应目录。
+- 统计每日入库数量和最近素材增长趋势。
+- 支持通过 Eagle 本地 API 或手动选择 `.library` 文件夹同步 Eagle 信息。
+- Eagle 同步保持只读，不写回、不移动、不删除、不复制 Eagle 原始文件。
 
-## Tech Stack
+## 技术栈
 
-| Layer | Stack |
+| 层级 | 技术 |
 | --- | --- |
-| Desktop | Electron |
-| UI | React + TypeScript |
-| Build | Vite |
-| Local data | JSON file store |
-| File watching | chokidar |
-| Icon system | lucide-react |
+| 桌面端 | Electron |
+| 界面 | React + TypeScript |
+| 构建 | Vite |
+| 本地数据 | JSON 文件索引 |
+| 文件监听 | chokidar |
+| 图标 | lucide-react |
 
-## Requirements
+## 环境要求
 
 - Windows
 - Node.js LTS
 - npm
-- Eagle, optional, if you want Eagle sync
+- Eagle，可选，用于 Eagle 素材库同步
 
-## Quick Start
+## 快速开始
 
-Clone the repository:
+克隆仓库：
 
 ```powershell
 git clone https://github.com/Saidyo/ae-workbench.git
 cd ae-workbench
 ```
 
-Install dependencies:
+安装依赖：
 
 ```powershell
 npm install
 ```
 
-Run in development mode:
+开发模式启动：
 
 ```powershell
 npm run dev
 ```
 
-Build the desktop app:
+构建桌面版本：
 
 ```powershell
 npm run build
 ```
 
-## One-Click Start On Windows
+## Windows 一键启动
 
-For daily local use, double-click:
+日常使用时，可以双击：
 
 ```text
 一键打开AE Workbench.cmd
 ```
 
-or:
+也可以双击：
 
 ```text
 open-ae-workbench.cmd
 ```
 
-For first-time deployment on another Windows machine, double-click:
+如果是首次部署到另一台 Windows 电脑，推荐双击：
 
 ```text
 一键部署并打开AE Workbench.cmd
 ```
 
-The deployment script checks Node.js/npm, installs dependencies, creates runtime folders, builds the app, checks the Eagle local API, and opens AE Workbench.
+部署脚本会检查 Node.js/npm、安装依赖、创建运行目录、构建应用、检测 Eagle 本地 API，并打开 AE Workbench。
 
-## Eagle Connection
+## 连接 Eagle
 
-AE Workbench supports two Eagle connection paths:
+AE Workbench 支持两种 Eagle 连接方式：
 
-- Eagle local API: `http://127.0.0.1:41595`
-- Manual `.library` folder selection from Settings
+- Eagle 本地 API：`http://127.0.0.1:41595`
+- 在设置页手动选择 Eagle 的 `.library` 文件夹
 
-Eagle sync is read-only. AE Workbench does not modify, delete, move, or copy Eagle originals.
+Eagle 同步是只读的。AE Workbench 不会修改、删除、移动或复制 Eagle 原始文件。
 
-## Local Runtime Folders
+## 本地运行目录
 
-These folders are generated locally and intentionally ignored by Git:
+以下目录会在本地生成，并且已经被 Git 忽略：
 
 ```text
 Library/
@@ -110,25 +110,25 @@ dist-electron/
 node_modules/
 ```
 
-## Scripts
+## 常用命令
 
-| Command | Description |
+| 命令 | 说明 |
 | --- | --- |
-| `npm run dev` | Start Vite and Electron for development |
-| `npm run build` | Type-check Electron files and build the renderer |
-| `npm run typecheck` | Run TypeScript checks without emitting files |
+| `npm run dev` | 启动 Vite 和 Electron 开发环境 |
+| `npm run build` | 构建 Electron 主进程和前端界面 |
+| `npm run typecheck` | 运行 TypeScript 类型检查 |
 
-## Documentation
+## 文档
 
-- [User Guide](docs/USER_GUIDE.md)
-- [UI Refactor Workflow](docs/AE_UI_REFACTOR_WORKFLOW.md)
-- [Product Notes](PRODUCT.md)
-- [Functional Design](AE%20Workbench_%E5%8A%9F%E8%83%BD%E8%AE%BE%E8%AE%A1.md)
+- [用户指南](docs/USER_GUIDE.md)
+- [UI 优化工作流](docs/AE_UI_REFACTOR_WORKFLOW.md)
+- [产品说明](PRODUCT.md)
+- [功能设计](AE%20Workbench_%E5%8A%9F%E8%83%BD%E8%AE%BE%E8%AE%A1.md)
 
-## Privacy
+## 隐私说明
 
-AE Workbench is designed as a local-first desktop tool. It stores project and asset indexes on your machine. The app does not provide a cloud upload service and does not send your local assets to a remote server.
+AE Workbench 是本地优先的桌面工具。项目与素材索引保存在你的电脑上，应用本身不提供云上传服务，也不会把本地素材发送到远程服务器。
 
-## License
+## 开源协议
 
-MIT License. See [LICENSE](LICENSE).
+本项目使用 MIT License，详见 [LICENSE](LICENSE)。

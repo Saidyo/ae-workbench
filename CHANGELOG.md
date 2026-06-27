@@ -1,11 +1,12 @@
-# Changelog
+# 更新日志
 
-All notable changes to AE Workbench will be documented in this file.
+本文件记录 AE Workbench 的主要版本变化。
 
 ## 0.1.0 - 2026-06-27
 
-- Initial public release.
-- Added local AE project management.
-- Added asset library indexing and preview.
-- Added Eagle read-only sync through local API or `.library` selection.
-- Added one-click Windows deployment scripts.
+- 发布首个公开版本。
+- 增加本地 AE 项目管理能力。
+- 增加素材库索引与图片/视频预览。
+- 增加 Eagle 本地 API 与 `.library` 文件夹只读同步。
+- 增加 Windows 一键部署和一键启动脚本。
+- 增加中文 README、开源协议、贡献说明、Issue 模板和 CI 检查。

@@ -1,5 +1,5 @@
-name: Bug report
-description: Report a reproducible problem in AE Workbench.
+name: 问题反馈
+description: 反馈 AE Workbench 中可以复现的问题。
 title: "[Bug]: "
 labels:
   - bug
@@ -7,33 +7,33 @@ body:
   - type: textarea
     id: summary
     attributes:
-      label: Summary
-      description: What happened?
+      label: 问题概述
+      description: 发生了什么？
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
-      label: Steps to reproduce
-      description: Tell us how to reproduce the issue.
+      label: 复现步骤
+      description: 请写出复现这个问题的操作步骤。
       placeholder: |
-        1. Open AE Workbench
-        2. Go to ...
-        3. Click ...
+        1. 打开 AE Workbench
+        2. 进入……
+        3. 点击……
     validations:
       required: true
   - type: input
     id: version
     attributes:
-      label: Version
+      label: 版本
       placeholder: 0.1.0
   - type: input
     id: system
     attributes:
-      label: System
+      label: 系统环境
       placeholder: Windows 11, Node.js 22
   - type: textarea
     id: logs
     attributes:
-      label: Logs or screenshots
-      description: Add logs, screenshots, or error messages if available.
+      label: 日志或截图
+      description: 如果有日志、截图或错误信息，可以贴在这里。
