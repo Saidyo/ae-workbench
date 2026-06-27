@@ -1,7 +1,18 @@
 {
   "name": "ae-workbench",
   "version": "0.1.0",
+  "description": "A local desktop workstation for After Effects project and asset management.",
   "private": true,
+  "author": "Saidyo",
+  "license": "MIT",
+  "homepage": "https://github.com/Saidyo/ae-workbench#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Saidyo/ae-workbench.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Saidyo/ae-workbench/issues"
+  },
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "concurrently \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && tsc -p tsconfig.electron.json && electron .\"",
