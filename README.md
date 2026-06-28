@@ -65,29 +65,17 @@ npm run dev
 npm run build
 ```
 
-生成 Windows 绿色版压缩包：
+生成 Windows 安装器：
 
 ```powershell
 npm run dist:win
 ```
 
-生成后可以在 `release/` 目录中找到发布文件。下载用户只需要解压压缩包，然后双击里面的 `AE Workbench.exe`。
+生成后可以在 `release/` 目录中找到 `AE Workbench Setup x.y.z.exe` 安装器。下载用户运行安装器后，可以从桌面快捷方式或开始菜单打开 AE Workbench。
 
-## Windows 一键启动
+## Windows 一键部署
 
-日常使用时，可以双击：
-
-```text
-一键打开AE Workbench.cmd
-```
-
-也可以双击：
-
-```text
-open-ae-workbench.cmd
-```
-
-如果是首次部署到另一台 Windows 电脑，推荐双击：
+如果是源码目录首次部署到另一台 Windows 电脑，推荐双击：
 
 ```text
 一键部署并打开AE Workbench.cmd
@@ -95,7 +83,7 @@ open-ae-workbench.cmd
 
 部署脚本会检查 Node.js/npm、安装依赖、创建运行目录、构建应用、检测 Eagle 本地 API，并打开 AE Workbench。
 
-如果下载的是 GitHub Release 中的绿色版压缩包，则不需要安装 Node.js。解压后直接双击 `AE Workbench.exe` 即可。
+如果下载的是 GitHub Release 中的 Windows 安装器，则不需要安装 Node.js。运行安装器后直接打开 AE Workbench 即可。
 
 ## 连接 Eagle
 

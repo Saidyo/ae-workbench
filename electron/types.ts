@@ -13,7 +13,7 @@ export type AssetType =
 
 export type AssetSource = "local" | "eagle";
 
-export type AssetSourceStatus = "active" | "missing" | "unavailable";
+export type AssetSourceStatus = "active" | "missing" | "unavailable" | "broken";
 
 export type EagleSyncStatus = "success" | "partial" | "failed";
 
@@ -23,6 +23,7 @@ export interface Project {
   status: ProjectStatus;
   rootPath: string;
   coverAssetId?: string;
+  notes?: string;
   deadline?: string;
   createdAt: string;
   updatedAt: string;
@@ -55,7 +56,6 @@ export interface Asset {
   eagleUpdatedAt?: string;
   eagleImportedAt?: string;
   sourceStatus?: AssetSourceStatus;
-  rawEagleMetadata?: Record<string, unknown>;
   fileSize: number;
   createdAt: string;
   updatedAt: string;
@@ -168,6 +168,8 @@ export interface DailyAssetStats {
   characterCount: number;
   referenceCount: number;
   aeCount: number;
+  /** psd + template + misc 等未单独成桶的类型，用于保证 totalCount 守恒 */
+  otherCount: number;
   totalSize: number;
   createdAt: string;
   updatedAt: string;

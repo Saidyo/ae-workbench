@@ -23,6 +23,9 @@ const useBuiltRenderer = app.isPackaged || process.env.AE_MANAGER_PROD === "1";
 let mainWindow: BrowserWindow | null = null;
 let store: DataStore;
 let syncWatcher: FSWatcher | null = null;
+let syncWatcherRootsKey = "";
+let eagleAutoSyncTimer: ReturnType<typeof setInterval> | null = null;
+let eagleLastKnownCount = -1;
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -31,7 +34,7 @@ async function createWindow() {
     minWidth: 1120,
     minHeight: 720,
     title: "AE Workbench",
-    backgroundColor: "#f6f4ef",
+    backgroundColor: "#fbfbfa",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -65,6 +68,11 @@ function attachWindowDiagnostics(window: BrowserWindow) {
   const logPath = path.join(workspaceRoot, "data", "runtime.log");
   const writeLog = (message: string) => {
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    try {
+      if (fs.existsSync(logPath) && fs.statSync(logPath).size > 512 * 1024) {
+        fs.renameSync(logPath, `${logPath}.old`);
+      }
+    } catch { /* 轮转失败不影响主流程 */ }
     fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`, "utf8");
   };
 
@@ -109,9 +117,11 @@ function installSecurityGuards() {
 
 function buildContentSecurityPolicy() {
   const devSources = useBuiltRenderer ? "" : " http://127.0.0.1:5173 ws://127.0.0.1:5173";
+  // dev 模式下 Vite React Fast Refresh preamble 是内联脚本，需要 unsafe-inline
+  const devInline = useBuiltRenderer ? "" : " 'unsafe-inline'";
   return [
     "default-src 'self'",
-    `script-src 'self'${devSources}`,
+    `script-src 'self'${devSources}${devInline}`,
     "style-src 'self' 'unsafe-inline'",
     `connect-src 'self' asset:${devSources}`,
     "img-src 'self' data: asset:",
@@ -244,7 +254,9 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  store?.flushPendingSave();
   syncWatcher?.close().catch(() => undefined);
+  if (eagleAutoSyncTimer) { clearInterval(eagleAutoSyncTimer); eagleAutoSyncTimer = null; }
 });
 
 app.on("activate", async () => {
@@ -303,7 +315,7 @@ function registerIpc() {
 
   ipcMain.handle("assets:open", async (_event, id: unknown) => {
     assertString(id, "asset id");
-    const asset = store.getInitialData().assets.find((item) => item.id === id);
+    const asset = store.getAssetById(id);
     if (!asset) throw new Error("Asset not found");
     await shell.openPath(asset.path);
     return true;
@@ -311,7 +323,7 @@ function registerIpc() {
 
   ipcMain.handle("assets:reveal", (_event, id: unknown) => {
     assertString(id, "asset id");
-    const asset = store.getInitialData().assets.find((item) => item.id === id);
+    const asset = store.getAssetById(id);
     if (!asset) throw new Error("Asset not found");
     shell.showItemInFolder(asset.path);
     return true;
@@ -327,6 +339,8 @@ function registerIpc() {
     setupSyncWatcher();
     return { addedCount: synced.length };
   });
+
+  ipcMain.handle("assets:markMissing", () => store.markMissingAssets());
 
   ipcMain.handle("assets:pruneMissing", () => store.pruneMissingAssets());
 
@@ -366,6 +380,44 @@ function registerIpc() {
     assertString(sourceId, "sourceId");
     return store.unlinkEagleSource(sourceId);
   });
+
+  ipcMain.handle("assets:relink", (_event, input: unknown) => {
+    if (!isPlainRecord(input)) throw new Error("Invalid input");
+    assertString(input.id, "id");
+    assertString(input.newPath, "newPath");
+    return store.relinkAsset(input.id, input.newPath);
+  });
+
+  ipcMain.handle("assets:findDuplicates", () => store.findDuplicates());
+
+  ipcMain.handle("assets:batchUnlink", (_event, ids: unknown) => {
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw new Error("ids must be string[]");
+    return store.batchUnlink(ids as string[]);
+  });
+
+  ipcMain.handle("assets:batchTag", (_event, input: unknown) => {
+    if (!isPlainRecord(input)) throw new Error("Invalid input");
+    const { ids, tag } = input;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw new Error("ids must be string[]");
+    assertString(tag, "tag");
+    return store.batchAddTag(ids as string[], tag);
+  });
+
+  ipcMain.handle("projects:exportCsv", async (_event, projectId: unknown) => {
+    assertString(projectId, "projectId");
+    const csv = store.exportProjectCsv(projectId);
+    const saveResult = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, { title: "导出素材清单", defaultPath: "assets.csv", filters: [{ name: "CSV", extensions: ["csv"] }] })
+      : await dialog.showSaveDialog({ title: "导出素材清单", defaultPath: "assets.csv", filters: [{ name: "CSV", extensions: ["csv"] }] });
+    if (saveResult.canceled || !saveResult.filePath) return false;
+    fs.writeFileSync(saveResult.filePath, "﻿" + csv, "utf8");
+    return true;
+  });
+
+  ipcMain.handle("eagle:setAutoSync", (_event, enabled: unknown) => {
+    setupEagleAutoSync(Boolean(enabled));
+    return Boolean(enabled);
+  });
 }
 
 function assertString(value: unknown, label: string): asserts value is string {
@@ -397,6 +449,7 @@ function validateUpdateProjectInput(input: unknown) {
   if (isProjectStatus(patch.status)) nextPatch.status = patch.status;
   if (typeof patch.deadline === "string" || patch.deadline === undefined) nextPatch.deadline = patch.deadline;
   if (typeof patch.coverAssetId === "string" || patch.coverAssetId === undefined) nextPatch.coverAssetId = patch.coverAssetId;
+  if (typeof patch.notes === "string" || patch.notes === undefined) nextPatch.notes = patch.notes;
   return { id: input.id, patch: nextPatch };
 }
 
@@ -430,48 +483,27 @@ function isKnownOpenPath(targetPath: string) {
   return isInsideAnyKnownRoot(stat.isDirectory() ? targetPath : path.dirname(targetPath));
 }
 
-function isKnownAssetPath(filePath: string) {
-  const initialData = store.getInitialData();
-  return initialData.assets.some(
-    (asset) => asset.path === filePath || asset.thumbnailPath === filePath
-  );
+function getExistingStat(filePath: string): import("fs").Stats | null {
+  try { return fs.statSync(filePath); } catch { return null; }
 }
 
-function isInsideAnyKnownRoot(targetPath: string) {
-  const initialData = store.getInitialData();
-  const roots = [
-    initialData.workspaceRoot,
-    initialData.libraryRoot,
-    initialData.projectsRoot,
-    initialData.cacheRoot,
-    ...initialData.watchedFolders,
-    ...initialData.eagleSources.map((source) => source.libraryPath).filter((item): item is string => Boolean(item))
-  ];
-  return roots.some((root) => isInside(targetPath, root));
+function isInsideAnyKnownRoot(dir: string): boolean {
+  return store.getWatchedRoots().some(root => dir === root || dir.startsWith(root + path.sep));
 }
 
-function getExistingStat(targetPath: string) {
-  try {
-    return fs.statSync(targetPath);
-  } catch {
-    return null;
-  }
-}
-
-function isInside(filePath: string, parent: string) {
-  const normalizedPath = path.resolve(filePath).toLowerCase();
-  const normalizedParent = path.resolve(parent).toLowerCase();
-  return normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}${path.sep}`);
+function isKnownAssetPath(filePath: string): boolean {
+  return store.hasAssetPath(filePath);
 }
 
 function setupSyncWatcher() {
+  const roots = store.getWatchedRoots();
+  const nextKey = roots.join("\u0000");
+  if (nextKey === syncWatcherRootsKey && syncWatcher) return;
+  syncWatcherRootsKey = nextKey;
   syncWatcher?.close().catch(() => undefined);
-  syncWatcher = watch(store.getWatchedRoots(), {
+  syncWatcher = watch(roots, {
     ignoreInitial: true,
-    awaitWriteFinish: {
-      stabilityThreshold: 1200,
-      pollInterval: 150
-    },
+    awaitWriteFinish: { stabilityThreshold: 1200, pollInterval: 150 },
     ignored: (filePath) =>
       path.extname(filePath).toLowerCase() === ".json" ||
       filePath.includes(`${path.sep}node_modules${path.sep}`) ||
@@ -497,4 +529,36 @@ function notifySyncChanged(reason: "file-added" | "file-removed", filePath: stri
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("sync:changed", { reason, path: filePath, at: new Date().toISOString() });
   }
+}
+
+function setupEagleAutoSync(enabled: boolean) {
+  if (eagleAutoSyncTimer) { clearInterval(eagleAutoSyncTimer); eagleAutoSyncTimer = null; }
+  eagleLastKnownCount = -1;
+  if (!enabled) return;
+  eagleAutoSyncTimer = setInterval(() => { runEagleAutoSync().catch(() => undefined); }, 30_000);
+}
+
+async function runEagleAutoSync() {
+  try {
+    const conn = await checkEagleConnection();
+    if (!conn.connected || !conn.apiBaseUrl) return;
+    const url = new URL("/api/item/list", conn.apiBaseUrl);
+    url.searchParams.set("limit", "1");
+    url.searchParams.set("offset", "0");
+    const resp = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!resp.ok) return;
+    const body = await resp.json() as Record<string, unknown>;
+    const data = (body?.data ?? body) as Record<string, unknown>;
+    const total = typeof data?.total === "number" ? data.total : -1;
+    if (total < 0) return;
+    if (eagleLastKnownCount === -1) { eagleLastKnownCount = total; return; }
+    if (total === eagleLastKnownCount) return;
+    eagleLastKnownCount = total;
+    const source = store.getEagleSource();
+    const payload = await buildEagleSyncPayload({ source });
+    const result = store.applyEagleSync(payload);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("eagle:autoSynced", { addedCount: result.run.addedCount, updatedCount: result.run.updatedCount });
+    }
+  } catch { /* ignore */ }
 }

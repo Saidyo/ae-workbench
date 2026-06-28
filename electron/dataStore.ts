@@ -96,6 +96,9 @@ export class DataStore {
 
   private readonly dataPath: string;
   private data: AppData = structuredClone(defaultData);
+  private assetById = new Map<string, Asset>();
+  private assetByPath = new Map<string, Asset>();
+  private saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(workspaceRoot: string) {
     this.workspaceRoot = workspaceRoot;
@@ -122,6 +125,115 @@ export class DataStore {
 
   getWatchedRoots() {
     return [this.libraryRoot, this.projectsRoot, ...this.data.watchedFolders];
+  }
+
+  getAssetById(id: string): Asset | undefined {
+    return this.assetById.get(id);
+  }
+
+  hasAssetPath(filePath: string): boolean {
+    const n = normalizePath(filePath);
+    for (const asset of this.data.assets) {
+      if (normalizePath(asset.path) === n) return true;
+      if (asset.thumbnailPath && normalizePath(asset.thumbnailPath) === n) return true;
+    }
+    return false;
+  }
+
+  getKnownRoots(): { workspaceRoot: string; libraryRoot: string; projectsRoot: string; cacheRoot: string; watchedFolders: string[]; eagleLibraryPaths: string[] } {
+    return {
+      workspaceRoot: this.workspaceRoot,
+      libraryRoot: this.libraryRoot,
+      projectsRoot: this.projectsRoot,
+      cacheRoot: this.cacheRoot,
+      watchedFolders: [...this.data.watchedFolders],
+      eagleLibraryPaths: this.data.eagleSources.map((s) => s.libraryPath).filter((p): p is string => Boolean(p))
+    };
+  }
+
+  private rebuildIndex() {
+    this.assetById = new Map(this.data.assets.map((a) => [a.id, a]));
+    this.assetByPath = new Map(this.data.assets.map((a) => [normalizePath(a.path), a]));
+  }
+
+  private scheduleSave() {
+    if (this.saveDebounceTimer !== null) clearTimeout(this.saveDebounceTimer);
+    this.saveDebounceTimer = setTimeout(() => { this.saveDebounceTimer = null; this.save(); }, 400);
+  }
+
+  flushPendingSave() {
+    if (this.saveDebounceTimer === null) return;
+    clearTimeout(this.saveDebounceTimer);
+    this.saveDebounceTimer = null;
+    this.save();
+  }
+
+  relinkAsset(id: string, newPath: string): Asset {
+    const asset = this.assetById.get(id);
+    if (!asset) throw new Error("Asset not found");
+    if (!fs.existsSync(newPath) || !fs.statSync(newPath).isFile()) throw new Error("文件不存在: " + newPath);
+    const stat = fs.statSync(newPath);
+    asset.path = newPath;
+    asset.sourceStatus = "active";
+    asset.fileSize = stat.size;
+    asset.fileModifiedAt = stat.mtime.toISOString();
+    asset.updatedAt = new Date().toISOString();
+    this.save();
+    return asset;
+  }
+
+  findDuplicates(): Asset[][] {
+    const groups = new Map<string, Asset[]>();
+    for (const asset of this.data.assets) {
+      const key = path.basename(asset.path).toLowerCase() + "|" + asset.fileSize;
+      const group = groups.get(key) ?? [];
+      group.push(asset);
+      groups.set(key, group);
+    }
+    return Array.from(groups.values()).filter((g) => g.length > 1);
+  }
+
+  batchUnlink(ids: string[]): { removedCount: number } {
+    const idSet = new Set(ids);
+    const removed = this.data.assets.filter((a) => idSet.has(a.id));
+    this.data.assets = this.data.assets.filter((a) => !idSet.has(a.id));
+    this.data.projectAssets = this.data.projectAssets.filter((item) => !idSet.has(item.assetId));
+    for (const asset of removed) {
+      this.data.ignoredAssetPaths = Array.from(new Set([...this.data.ignoredAssetPaths, normalizePath(asset.path)]));
+    }
+    this.save();
+    return { removedCount: removed.length };
+  }
+
+  batchAddTag(ids: string[], tag: string): { updatedCount: number } {
+    const trimmed = tag.trim();
+    if (!trimmed) return { updatedCount: 0 };
+    let count = 0;
+    for (const id of ids) {
+      const asset = this.assetById.get(id);
+      if (!asset) continue;
+      if (!asset.tags) asset.tags = [];
+      if (!asset.tags.includes(trimmed)) { asset.tags = [...asset.tags, trimmed]; count++; }
+      asset.updatedAt = new Date().toISOString();
+    }
+    if (count > 0) this.save();
+    return { updatedCount: count };
+  }
+
+  exportProjectCsv(projectId: string): string {
+    const project = this.data.projects.find((p) => p.id === projectId);
+    if (!project) throw new Error("Project not found");
+    const assetIds = new Set(this.data.projectAssets.filter((pa) => pa.projectId === projectId).map((pa) => pa.assetId));
+    const assets = this.data.assets.filter((a) => assetIds.has(a.id));
+    const rows = [["名称", "类型", "路径", "来源", "大小(字节)", "入库时间", "标签"].join(",")];
+    for (const asset of assets) {
+      rows.push([
+        csvEscape(asset.name), asset.type, csvEscape(asset.path),
+        asset.source ?? "local", String(asset.fileSize),
+        asset.createdAt.slice(0, 10), csvEscape((asset.tags ?? []).join(";"))
+      ].join(","));
+    }
+    return rows.join("\r\n");
   }
 
   getEagleSource(sourceId?: string): EagleSource | undefined {
@@ -247,7 +359,6 @@ export class DataStore {
         eagleUpdatedAt: input.updatedAt,
         eagleImportedAt: input.importedAt,
         sourceStatus,
-        rawEagleMetadata: input.rawMetadata,
         fileSize: stat?.size ?? input.fileSize ?? 0,
         updatedAt,
         fileModifiedAt
@@ -288,7 +399,6 @@ export class DataStore {
         eagleUpdatedAt: input.updatedAt,
         eagleImportedAt: input.importedAt,
         sourceStatus,
-        rawEagleMetadata: input.rawMetadata,
         fileSize: stat?.size ?? input.fileSize ?? 0,
         createdAt: input.importedAt ?? input.createdAt ?? now,
         updatedAt,
@@ -427,7 +537,7 @@ export class DataStore {
     return project;
   }
 
-  updateProject(input: { id: string; patch: Partial<Pick<Project, "name" | "status" | "deadline" | "coverAssetId">> }): Project {
+  updateProject(input: { id: string; patch: Partial<Pick<Project, "name" | "status" | "deadline" | "coverAssetId" | "notes">> }): Project {
     const project = this.data.projects.find((item) => item.id === input.id);
     if (!project) {
       throw new Error("Project not found");
@@ -529,7 +639,7 @@ export class DataStore {
 
   syncFile(filePath: string): Asset | null {
     const asset = this.registerFile(filePath, { countStats: true });
-    if (asset) this.save();
+    if (asset) this.scheduleSave();
     return asset;
   }
 
@@ -557,28 +667,23 @@ export class DataStore {
     if (asset.source === "eagle") {
       asset.sourceStatus = "missing";
       asset.updatedAt = new Date().toISOString();
-      this.save();
+      this.scheduleSave();
       return true;
     }
 
     this.data.assets = this.data.assets.filter((item) => item.id !== asset.id);
     this.data.projectAssets = this.data.projectAssets.filter((item) => item.assetId !== asset.id);
-    this.save();
+    this.scheduleSave();
     return true;
   }
 
   pruneMissingAssets(): { removedAssets: number; removedProjectLinks: number } {
     const now = new Date().toISOString();
-    for (const asset of this.data.assets) {
-      if (asset.source === "eagle" && !fs.existsSync(asset.path)) {
-        asset.sourceStatus = "missing";
-        asset.updatedAt = now;
-      }
-    }
+    this.refreshAssetSourceStatuses(now);
 
     const existingIds = new Set(
       this.data.assets
-        .filter((asset) => asset.source === "eagle" || fs.existsSync(asset.path))
+        .filter((asset) => asset.source === "eagle" || (asset.sourceStatus ?? "active") === "active")
         .map((asset) => asset.id)
     );
     const removedAssets = this.data.assets.length - existingIds.size;
@@ -593,6 +698,21 @@ export class DataStore {
     const removedProjectLinks = beforeLinks - this.data.projectAssets.length;
     this.save();
     return { removedAssets, removedProjectLinks };
+  }
+
+  markMissingAssets(): { markedCount: number; restoredCount: number; brokenCount: number } {
+    const result = this.refreshAssetSourceStatuses();
+    if (result.changed) {
+      this.save();
+    } else {
+      this.rebuildIndex();
+    }
+
+    return {
+      markedCount: result.markedCount,
+      restoredCount: result.restoredCount,
+      brokenCount: this.data.assets.filter((asset) => isBrokenSourceStatus(asset.sourceStatus)).length
+    };
   }
 
   private upsertEagleSource(payload: EagleSyncPayload, now: string): EagleSource {
@@ -772,14 +892,26 @@ export class DataStore {
   }
 
   private load() {
-    if (!fs.existsSync(this.dataPath)) {
-      this.data = structuredClone(defaultData);
-      this.save();
-      return;
+    const bak = `${this.dataPath}.bak`;
+
+    const parse = (filePath: string): AppData | null => {
+      try {
+        const raw = fs.readFileSync(filePath, "utf8");
+        return { ...structuredClone(defaultData), ...JSON.parse(raw) } as AppData;
+      } catch {
+        return null;
+      }
+    };
+
+    let loaded: AppData | null = null;
+    if (fs.existsSync(this.dataPath)) {
+      loaded = parse(this.dataPath);
+      if (!loaded && fs.existsSync(bak)) {
+        loaded = parse(bak);
+      }
     }
 
-    const raw = fs.readFileSync(this.dataPath, "utf8");
-    this.data = { ...structuredClone(defaultData), ...JSON.parse(raw) };
+    this.data = loaded ?? structuredClone(defaultData);
     this.data.watchedFolders = this.data.watchedFolders ?? [];
     this.data.ignoredAssetPaths = this.data.ignoredAssetPaths ?? [];
     this.data.eagleSources = this.data.eagleSources ?? [];
@@ -788,19 +920,33 @@ export class DataStore {
     this.data.eagleSyncRuns = this.data.eagleSyncRuns ?? [];
     for (const asset of this.data.assets) {
       asset.source = asset.source ?? "local";
-      asset.sourceStatus = asset.sourceStatus ?? (asset.source === "eagle" && !fs.existsSync(asset.path) ? "missing" : "active");
+      asset.sourceStatus = asset.sourceStatus ?? "active";
       asset.tags = asset.tags ?? [];
       asset.eagleFolderIds = asset.eagleFolderIds ?? [];
       asset.eagleFolderNames = asset.eagleFolderNames ?? [];
+      // 迁移旧数据：清除不再持久化的 rawEagleMetadata
+      delete (asset as unknown as Record<string, unknown>)["rawEagleMetadata"];
     }
     this.cleanupIgnoredAssets();
-    this.repairDailyStatsTotals();
-    this.save();
+    const statusResult = this.refreshAssetSourceStatuses();
+    const rebuiltStats = this.rebuildDailyStatsFromAssets();
+    if (!loaded || statusResult.changed || rebuiltStats) {
+      this.save();
+    } else {
+      this.rebuildIndex();
+    }
     this.enrichPreviewMetadata();
   }
 
   private save() {
-    fs.writeFileSync(this.dataPath, JSON.stringify(this.data, null, 2), "utf8");
+    const tmp = `${this.dataPath}.tmp`;
+    const bak = `${this.dataPath}.bak`;
+    fs.writeFileSync(tmp, JSON.stringify(this.data), "utf8");
+    if (fs.existsSync(this.dataPath)) {
+      try { fs.copyFileSync(this.dataPath, bak); } catch { /* 备份失败不阻断写入 */ }
+    }
+    fs.renameSync(tmp, this.dataPath);
+    this.rebuildIndex();
   }
 
   private enrichPreviewMetadata() {
@@ -900,32 +1046,12 @@ export class DataStore {
     const date = now.slice(0, 10);
     let stats = this.data.dailyAssetStats.find((item) => item.date === date);
     if (!stats) {
-      stats = {
-        id: randomUUID(),
-        date,
-        totalCount: 0,
-        imageCount: 0,
-        videoCount: 0,
-        audioCount: 0,
-        characterCount: 0,
-        referenceCount: 0,
-        aeCount: 0,
-        totalSize: 0,
-        createdAt: now,
-        updatedAt: now
-      };
+      stats = this.createDailyStats(date, now);
       this.data.dailyAssetStats.unshift(stats);
     }
 
     for (const asset of assets) {
-      stats.totalCount += 1;
-      stats.totalSize += asset.fileSize;
-      if (asset.type === "image") stats.imageCount += 1;
-      if (asset.type === "video") stats.videoCount += 1;
-      if (asset.type === "audio") stats.audioCount += 1;
-      if (asset.type === "character") stats.characterCount += 1;
-      if (asset.type === "reference") stats.referenceCount += 1;
-      if (asset.type === "ae") stats.aeCount += 1;
+      this.addAssetToStats(stats, asset);
     }
     stats.updatedAt = now;
   }
@@ -939,47 +1065,96 @@ export class DataStore {
       const date = (asset.createdAt || asset.updatedAt || now).slice(0, 10);
       let stats = byDate.get(date);
       if (!stats) {
-        const existingStats = existing.get(date);
-        stats = {
-          id: existingStats?.id ?? randomUUID(),
-          date,
-          totalCount: 0,
-          imageCount: 0,
-          videoCount: 0,
-          audioCount: 0,
-          characterCount: 0,
-          referenceCount: 0,
-          aeCount: 0,
-          totalSize: 0,
-          createdAt: existingStats?.createdAt ?? date,
-          updatedAt: now
-        };
+        stats = this.createDailyStats(date, now, existing.get(date));
         byDate.set(date, stats);
       }
-
-      stats.totalCount += 1;
-      stats.totalSize += asset.fileSize;
-      if (asset.type === "image") stats.imageCount += 1;
-      if (asset.type === "video") stats.videoCount += 1;
-      if (asset.type === "audio") stats.audioCount += 1;
-      if (asset.type === "character") stats.characterCount += 1;
-      if (asset.type === "reference") stats.referenceCount += 1;
-      if (asset.type === "ae") stats.aeCount += 1;
+      this.addAssetToStats(stats, asset);
     }
 
-    this.data.dailyAssetStats = Array.from(byDate.values()).sort((left, right) => right.date.localeCompare(left.date));
+    const nextStats = Array.from(byDate.values()).sort((left, right) => right.date.localeCompare(left.date));
+    const changed = JSON.stringify(this.data.dailyAssetStats) !== JSON.stringify(nextStats);
+    this.data.dailyAssetStats = nextStats;
+    return changed;
   }
+
+  private createDailyStats(date: string, now: string, existing?: DailyAssetStats): DailyAssetStats {
+    return {
+      id: existing?.id ?? randomUUID(),
+      date,
+      totalCount: 0,
+      imageCount: 0,
+      videoCount: 0,
+      audioCount: 0,
+      characterCount: 0,
+      referenceCount: 0,
+      aeCount: 0,
+      otherCount: 0,
+      totalSize: 0,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now
+    };
+  }
+
+  private addAssetToStats(stats: DailyAssetStats, asset: Asset) {
+    stats.totalCount += 1;
+    stats.totalSize += asset.fileSize;
+    if (asset.type === "image") stats.imageCount += 1;
+    else if (asset.type === "video") stats.videoCount += 1;
+    else if (asset.type === "audio") stats.audioCount += 1;
+    else if (asset.type === "character") stats.characterCount += 1;
+    else if (asset.type === "reference") stats.referenceCount += 1;
+    else if (asset.type === "ae") stats.aeCount += 1;
+    else stats.otherCount = (stats.otherCount ?? 0) + 1;
+  }
+
+  private refreshAssetSourceStatuses(now = new Date().toISOString()) {
+    let changed = false;
+    let markedCount = 0;
+    let restoredCount = 0;
+
+    for (const asset of this.data.assets) {
+      const stat = getFileStat(asset.path);
+      const previousStatus = asset.sourceStatus ?? "active";
+      const nextStatus: AssetSourceStatus = stat
+        ? asset.source === "eagle" && previousStatus === "unavailable"
+          ? "unavailable"
+          : "active"
+        : asset.source === "eagle"
+        ? "missing"
+        : "broken";
+
+      if (nextStatus !== previousStatus) {
+        if (isBrokenSourceStatus(nextStatus)) markedCount += 1;
+        if (isBrokenSourceStatus(previousStatus) && nextStatus === "active") restoredCount += 1;
+        asset.sourceStatus = nextStatus;
+        asset.updatedAt = now;
+        changed = true;
+      }
+
+      if (stat && (asset.fileSize !== stat.size || asset.fileModifiedAt !== stat.mtime.toISOString())) {
+        asset.fileSize = stat.size;
+        asset.fileModifiedAt = stat.mtime.toISOString();
+        asset.updatedAt = now;
+        changed = true;
+      }
+    }
+
+    return { changed, markedCount, restoredCount };
+  }
+
 
   private repairDailyStatsTotals() {
     for (const stats of this.data.dailyAssetStats) {
+      stats.otherCount = stats.otherCount ?? 0;
       const trackedTotal =
         stats.imageCount +
         stats.videoCount +
         stats.audioCount +
         stats.characterCount +
         stats.referenceCount +
-        stats.aeCount;
-      if (stats.totalCount < trackedTotal || stats.totalCount > trackedTotal) {
+        stats.aeCount +
+        stats.otherCount;
+      if (stats.totalCount !== trackedTotal) {
         stats.totalCount = trackedTotal;
         stats.updatedAt = new Date().toISOString();
       }
@@ -1063,6 +1238,10 @@ function normalizePath(filePath: string) {
   return path.resolve(filePath).toLowerCase();
 }
 
+function isBrokenSourceStatus(status: AssetSourceStatus | undefined) {
+  return status === "broken" || status === "missing";
+}
+
 function findSiblingThumbnail(filePath: string) {
   try {
     const folder = path.dirname(filePath);
@@ -1102,4 +1281,8 @@ function pruneNestedFolders(folders: string[]) {
     }
   }
   return result;
+}
+
+function csvEscape(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
 }

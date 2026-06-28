@@ -14,31 +14,39 @@ import {
 } from "react";
 import {
   Activity,
+  AlertTriangle,
   ArrowUpDown,
   BarChart3,
   CalendarClock,
   CheckCircle2,
+  CheckSquare,
   ChevronRight,
   Clapperboard,
   Clock3,
+  Copy,
   Database,
   Eye,
   EyeOff,
+  FileDown,
   FileText,
   FolderOpen,
   HardDrive,
   Image,
   Import,
+  Layers,
   Library,
   Link2,
   Link2Off,
   ListChecks,
+  Moon,
   Play,
   Plus,
   RefreshCw,
   Search,
   Settings2,
+  StickyNote,
   Star,
+  Sun,
   Tags,
   Trash2,
   Video,
@@ -105,14 +113,18 @@ const defaultLibraryFilterWidth = 330;
 const minLibraryFilterWidth = 248;
 const maxLibraryFilterWidth = 520;
 const libraryFilterWidthStorageKey = "ae-manager-library-filter-width";
+const themeStorageKey = "ae-workbench-theme";
 type AssetScope = "all" | "project";
 type AppSection = "overview" | "projects" | "library" | "daily" | "settings";
+type ThemeMode = "light" | "dark";
 type AssetTimeField = "createdAt" | "fileModifiedAt";
 type AssetTimePreset = "all" | "today" | "7d" | "30d" | "custom";
 type AssetSortDirection = "asc" | "desc";
 type AssetSourceFilter = AssetSource | "all";
 type EagleStatusFilter = AssetSourceStatus | "all";
 type EagleRatingFilter = "all" | "rated" | "5" | "4" | "3";
+type SmartCollectionId = "recent" | "highRated" | "unassigned" | "broken" | "frequent";
+type AssetProjectReference = { project: Project; usageType: string; createdAt: string };
 
 const assetTimeFieldLabel: Record<AssetTimeField, string> = {
   createdAt: "入库时间",
@@ -137,7 +149,16 @@ const eagleStatusLabel: Record<EagleStatusFilter, string> = {
   all: "全部状态",
   active: "可用",
   missing: "文件缺失",
-  unavailable: "未在 Eagle 列表"
+  unavailable: "未在 Eagle 列表",
+  broken: "断链"
+};
+
+const smartCollectionLabel: Record<SmartCollectionId, string> = {
+  recent: "最近添加",
+  highRated: "高评分素材",
+  unassigned: "未分配项目",
+  broken: "失效素材",
+  frequent: "常用素材"
 };
 
 const eagleRatingOptions: Array<{ label: string; value: EagleRatingFilter }> = [
@@ -160,6 +181,12 @@ function getStoredSidebarWidth() {
 function getStoredLibraryFilterWidth() {
   const stored = Number(window.localStorage.getItem(libraryFilterWidthStorageKey));
   return Number.isFinite(stored) ? clampNumber(stored, minLibraryFilterWidth, maxLibraryFilterWidth) : defaultLibraryFilterWidth;
+}
+
+function getStoredTheme(): ThemeMode {
+  const stored = window.localStorage.getItem(themeStorageKey);
+  if (stored === "light" || stored === "dark") return stored;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 const pageMeta: Record<AppSection, { eyebrow: string; title: string; accent: string; copy: string }> = {
@@ -201,6 +228,7 @@ export function App() {
   const [deadline, setDeadline] = useState("");
   const [activeSection, setActiveSection] = useState<AppSection>("overview");
   const [assetScope, setAssetScope] = useState<AssetScope>("all");
+  const [smartCollection, setSmartCollection] = useState<SmartCollectionId | null>(null);
   const [assetFilter, setAssetFilter] = useState<AssetType | "all">("all");
   const [assetSourceFilter, setAssetSourceFilter] = useState<AssetSourceFilter>("all");
   const [eagleFolderFilter, setEagleFolderFilter] = useState("all");
@@ -227,6 +255,16 @@ export function App() {
   const [libraryFilterWidth, setLibraryFilterWidth] = useState(getStoredLibraryFilterWidth);
   const [isLibraryFilterResizing, setIsLibraryFilterResizing] = useState(false);
   const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(() => new Set());
+  const [batchTagInput, setBatchTagInput] = useState("");
+  const [searchHistory, setSearchHistory] = useState<string[]>([]);
+  const [showSearchHistory, setShowSearchHistory] = useState(false);
+  const [duplicateGroups, setDuplicateGroups] = useState<Asset[][] | null>(null);
+  const [assetSizeMin, setAssetSizeMin] = useState("");
+  const [assetSizeMax, setAssetSizeMax] = useState("");
+  const [eagleAutoSync, setEagleAutoSync] = useState(false);
+  const [projectNotes, setProjectNotes] = useState("");
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredTheme);
   const [isPending, startUiTransition] = useTransition();
   const deferredSearch = useDeferredValue(search);
   const workspaceRef = useRef<HTMLElement | null>(null);
@@ -240,6 +278,11 @@ export function App() {
   const libraryFilterResizeRef = useRef<{ startWidth: number; startX: number } | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const desktopApi = window.aeManager;
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    window.localStorage.setItem(themeStorageKey, themeMode);
+  }, [themeMode]);
 
   const refresh = useCallback(async () => {
     if (!desktopApi) {
@@ -258,12 +301,23 @@ export function App() {
 
   useEffect(() => {
     if (!desktopApi) return;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     return desktopApi.onSyncChanged((payload) => {
-      refresh().catch(() => undefined);
       const verb = payload.reason === "file-added" ? "新增" : "移除";
       setMessage(`本地文件夹已同步${verb}: ${getFileName(payload.path)}`);
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => { refresh().catch(() => undefined); }, 300);
     });
   }, [desktopApi, refresh]);
+
+  useEffect(() => {
+    if (!desktopApi?.onEagleAutoSynced) return;
+    return desktopApi.onEagleAutoSynced((payload) => {
+      setMessage(`Eagle 自动同步: 新增 ${payload.addedCount}，更新 ${payload.updatedCount}`);
+      refresh().catch(() => undefined);
+    });
+  }, [desktopApi, refresh]);
+
 
   useEffect(() => {
     window.localStorage.setItem(sidebarWidthStorageKey, String(sidebarWidth));
@@ -346,6 +400,10 @@ export function App() {
 
   const recentMaxCount = useMemo(() => Math.max(1, ...recentStats.map((item) => item.totalCount)), [recentStats]);
   const selectedProject = data.projects.find((project) => project.id === selectedProjectId);
+
+  useEffect(() => {
+    setProjectNotes(selectedProject?.notes ?? "");
+  }, [selectedProject?.id, selectedProject?.notes]);
   const selectedProjectAssetIds = useMemo(
     () => new Set(data.projectAssets.filter((item) => item.projectId === selectedProjectId).map((item) => item.assetId)),
     [data.projectAssets, selectedProjectId]
@@ -356,6 +414,16 @@ export function App() {
       return counts;
     }, new Map<string, number>());
   }, [data.projectAssets]);
+  const projectById = useMemo(() => new Map(data.projects.map((project) => [project.id, project])), [data.projects]);
+  const coverUrlById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const project of data.projects) {
+      if (!project.coverAssetId) continue;
+      const asset = data.assets.find((a) => a.id === project.coverAssetId);
+      if (asset?.path) map.set(project.id, safeAssetUrl(asset.path));
+    }
+    return map;
+  }, [data.projects, data.assets]);
   const assetProjectIds = useMemo(() => {
     return data.projectAssets.reduce((byAsset, item) => {
       const projectIds = byAsset.get(item.assetId) ?? new Set<string>();
@@ -364,6 +432,47 @@ export function App() {
       return byAsset;
     }, new Map<string, Set<string>>());
   }, [data.projectAssets]);
+  const assetUsageCounts = useMemo(() => {
+    return data.projectAssets.reduce((counts, item) => {
+      counts.set(item.assetId, (counts.get(item.assetId) ?? 0) + 1);
+      return counts;
+    }, new Map<string, number>());
+  }, [data.projectAssets]);
+  const assetProjectReferences = useMemo(() => {
+    return data.projectAssets.reduce((references, item) => {
+      const project = projectById.get(item.projectId);
+      if (!project) return references;
+      const list = references.get(item.assetId) ?? [];
+      list.push({ project, usageType: item.usageType, createdAt: item.createdAt });
+      references.set(item.assetId, list);
+      return references;
+    }, new Map<string, AssetProjectReference[]>());
+  }, [data.projectAssets, projectById]);
+  const frequentAssetIds = useMemo(() => {
+    const ranked = Array.from(assetUsageCounts.entries())
+      .filter(([, count]) => count > 0)
+      .sort((left, right) => right[1] - left[1]);
+    const limit = Math.max(1, Math.ceil(ranked.length * 0.2));
+    return new Set(ranked.slice(0, limit).map(([assetId]) => assetId));
+  }, [assetUsageCounts]);
+  const recentCollectionStart = useMemo(() => {
+    const date = new Date();
+    date.setDate(date.getDate() - 6);
+    return startOfLocalDay(date).getTime();
+  }, [data.assets.length]);
+  const smartCollectionCounts = useMemo(() => {
+    return data.assets.reduce(
+      (counts, asset) => {
+        if (isRecentAsset(asset, recentCollectionStart)) counts.recent += 1;
+        if ((asset.rating ?? 0) >= 4) counts.highRated += 1;
+        if (!assetProjectIds.get(asset.id)?.size) counts.unassigned += 1;
+        if (isBrokenAsset(asset)) counts.broken += 1;
+        if (frequentAssetIds.has(asset.id)) counts.frequent += 1;
+        return counts;
+      },
+      { recent: 0, highRated: 0, unassigned: 0, broken: 0, frequent: 0 } satisfies Record<SmartCollectionId, number>
+    );
+  }, [assetProjectIds, data.assets, frequentAssetIds, recentCollectionStart]);
   const selectedProjectAssets = useMemo(() => data.assets.filter((asset) => selectedProjectAssetIds.has(asset.id)), [data.assets, selectedProjectAssetIds]);
   const projectPreviewAssets = useMemo(() => selectedProjectAssets.slice(0, 6), [selectedProjectAssets]);
   const selectedProjectTypeCounts = useMemo(() => {
@@ -401,11 +510,13 @@ export function App() {
       const projectIds = assetProjectIds.get(asset.id);
       const source = asset.source ?? "local";
       const matchesType = assetFilter === "all" || asset.type === assetFilter;
-      const searchPool = [asset.name, asset.path, asset.annotation, asset.url, ...(asset.tags ?? []), ...(asset.eagleFolderNames ?? [])]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      const matchesSearch = !normalized || searchPool.includes(normalized);
+      const matchesSearch =
+        !normalized ||
+        [asset.name, asset.path, asset.annotation, asset.url, ...(asset.tags ?? []), ...(asset.eagleFolderNames ?? [])]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(normalized);
       const matchesTime = isAssetInsideTimeRange(asset, assetTimeField, assetTimeRange);
       const matchesSource = assetSourceFilter === "all" || source === assetSourceFilter;
       const matchesEagleFolder =
@@ -420,6 +531,18 @@ export function App() {
         (selectedEagleTag ? source === "eagle" && asset.externalLibraryId === selectedEagleTag.sourceId && asset.tags?.includes(selectedEagleTag.name) : true);
       const matchesEagleRating = matchesRatingFilter(asset.rating, eagleRatingFilter);
       const matchesEagleStatus = eagleStatusFilter === "all" || (asset.sourceStatus ?? "active") === eagleStatusFilter;
+      const matchesSmartCollection =
+        !smartCollection ||
+        matchesSmartCollectionFilter(asset, smartCollection, {
+          assetProjectIds,
+          frequentAssetIds,
+          recentCollectionStart
+        });
+      const sizeMinBytes = assetSizeMin ? Number(assetSizeMin) * 1024 * 1024 : undefined;
+      const sizeMaxBytes = assetSizeMax ? Number(assetSizeMax) * 1024 * 1024 : undefined;
+      const matchesSize =
+        (sizeMinBytes === undefined || asset.fileSize >= sizeMinBytes) &&
+        (sizeMaxBytes === undefined || asset.fileSize <= sizeMaxBytes);
       const isExcludedType = excludedAssetTypes.has(asset.type);
       const isExcludedProject = projectIds ? Array.from(projectIds).some((projectId) => excludedProjectIds.has(projectId)) : false;
       return (
@@ -431,6 +554,8 @@ export function App() {
         matchesEagleTag &&
         matchesEagleRating &&
         matchesEagleStatus &&
+        matchesSmartCollection &&
+        matchesSize &&
         !isExcludedType &&
         !isExcludedProject
       );
@@ -439,6 +564,8 @@ export function App() {
     assetFilter,
     assetProjectIds,
     assetScope,
+    assetSizeMax,
+    assetSizeMin,
     assetSourceFilter,
     assetTimeField,
     assetTimeRange,
@@ -449,10 +576,13 @@ export function App() {
     eagleTagFilter,
     excludedAssetTypes,
     excludedProjectIds,
+    frequentAssetIds,
     deferredSearch,
+    recentCollectionStart,
     selectedEagleFolder,
     selectedEagleTag,
-    selectedProjectAssetIds
+    selectedProjectAssetIds,
+    smartCollection
   ]);
 
   const sortedAssets = useMemo(() => {
@@ -468,17 +598,28 @@ export function App() {
   const selectedProjectAssetCount = selectedProjectAssetIds.size;
   const hasActiveExclusions = excludedAssetTypes.size > 0 || excludedProjectIds.size > 0;
   const hasActiveTimeFilter = Boolean(assetTimeRange);
+  const hasActiveSizeFilter = Boolean(assetSizeMin || assetSizeMax);
   const hasActiveEagleFilter =
     assetSourceFilter !== "all" ||
     eagleFolderFilter !== "all" ||
     eagleTagFilter !== "all" ||
     eagleRatingFilter !== "all" ||
     eagleStatusFilter !== "all";
+  const hasAnyAssetFilter =
+    Boolean(smartCollection) ||
+    assetFilter !== "all" ||
+    hasActiveExclusions ||
+    hasActiveTimeFilter ||
+    hasActiveSizeFilter ||
+    hasActiveEagleFilter ||
+    Boolean(deferredSearch.trim());
   const excludedAssetTypeCount = excludedAssetTypes.size;
   const excludedProjectCount = excludedProjectIds.size;
   const libraryDirectoryName = assetScope === "project" && selectedProject ? selectedProject.name : "全部素材";
   const libraryDirectoryPath = assetScope === "project" && selectedProject ? selectedProject.rootPath : data.libraryRoot;
-  const emptyAssetTitle = hasActiveExclusions
+  const emptyAssetTitle = smartCollection
+    ? `${smartCollectionLabel[smartCollection]}集合暂无素材`
+    : hasActiveExclusions
     ? "当前排除条件下没有素材"
     : hasActiveTimeFilter
     ? "当前时间范围没有素材"
@@ -486,7 +627,9 @@ export function App() {
     ? `${selectedProject.name} 还没有关联素材`
     : "素材库是空的";
   const emptyAssetBody =
-    hasActiveExclusions
+    smartCollection
+      ? "清除智能集合或切换到全部素材后，可以继续用类型、时间和 Eagle 条件细筛。"
+      : hasActiveExclusions
       ? "取消部分屏蔽类型或屏蔽项目后，这里会重新显示符合条件的素材。"
       : hasActiveTimeFilter
       ? "切换到更宽的时间范围，或改用文件修改时间查看历史素材。"
@@ -495,6 +638,9 @@ export function App() {
       : "导入人物立绘、参考图、视频或 AE 工程后，这里会显示可预览的素材卡片。";
 
   const activeProjects = data.projects.filter((project) => project.status === "active").length;
+  const deadlineSoonProjects = data.projects.filter(isDeadlineSoon).length;
+  const brokenAssetCount = data.assets.filter(isBrokenAsset).length;
+  const showAssetEmptyActions = data.assets.length === 0 && !hasAnyAssetFilter && assetScope === "all";
   const totalSize = data.assets.reduce((sum, asset) => sum + asset.fileSize, 0);
   const assetCardMin = useMemo(() => Math.round(186 * (assetZoom / 100)), [assetZoom]);
   const visibleColumns = useMemo(() => {
@@ -504,6 +650,7 @@ export function App() {
   const baseRows = useMemo(() => Math.max(2, Math.round(4 * (100 / assetZoom))), [assetZoom]);
   const visibleLimit = visibleColumns * displayRows;
   const visibleAssets = useMemo(() => sortedAssets.slice(0, visibleLimit), [sortedAssets, visibleLimit]);
+  const previewAssetReferences = previewAsset ? assetProjectReferences.get(previewAsset.id) ?? [] : [];
 
   useEffect(() => {
     setDisplayRows(baseRows);
@@ -604,6 +751,7 @@ export function App() {
     startUiTransition(() => {
       setSelectedProjectId(projectId);
       setAssetScope("project");
+      setSmartCollection(null);
       setAssetFilter("all");
       setSearch("");
     });
@@ -613,10 +761,29 @@ export function App() {
   const showAllAssets = () => {
     startUiTransition(() => {
       setAssetScope("all");
+      setSmartCollection(null);
       setAssetFilter("all");
       setSearch("");
     });
     setMessage("正在查看全部素材");
+  };
+
+  const applySmartCollection = (collection: SmartCollectionId) => {
+    startUiTransition(() => {
+      setActiveSection("library");
+      setAssetScope("all");
+      setSmartCollection(collection);
+      setAssetFilter("all");
+      setSearch("");
+      setDisplayRows(baseRows);
+    });
+    setMessage(`正在查看智能集合: ${smartCollectionLabel[collection]}`);
+    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+  };
+
+  const clearSmartCollection = () => {
+    setSmartCollection(null);
+    setMessage("已清除智能集合筛选");
   };
 
   const toggleExcludedAssetType = (type: AssetType) => {
@@ -679,6 +846,7 @@ export function App() {
 
     startUiTransition(() => {
       setAssetScope("project");
+      setSmartCollection(null);
       setAssetFilter("all");
       setSearch("");
       setDisplayRows(baseRows);
@@ -771,8 +939,27 @@ export function App() {
     }
   };
 
+  const markMissingAssets = async () => {
+    if (!desktopApi) {
+      setMessage("请使用 open-ae-workbench.cmd 打开桌面版后再检测失效素材");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const result = await desktopApi.markMissingAssets();
+      setMessage(`失效检测完成: 新标记 ${result.markedCount} 个，恢复 ${result.restoredCount} 个，当前失效 ${result.brokenCount} 个`);
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "检测失效素材失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const resetAssetView = () => {
     setAssetScope("all");
+    setSmartCollection(null);
     setAssetFilter("all");
     setAssetSourceFilter("all");
     setEagleFolderFilter("all");
@@ -786,6 +973,9 @@ export function App() {
     setAssetTimePreset("all");
     setAssetDateFrom("");
     setAssetDateTo("");
+    setAssetSizeMin("");
+    setAssetSizeMax("");
+    setSelectedAssetIds(new Set());
     clearAssetExclusions();
     changeAssetZoom(100);
     setMessage("已恢复默认浏览");
@@ -826,6 +1016,7 @@ export function App() {
       setDeadline("");
       setSelectedProjectId(project.id);
       setAssetScope("project");
+      setSmartCollection(null);
       setAssetFilter("all");
       setSearch("");
       setMessage(`已创建项目: ${project.name}`);
@@ -856,6 +1047,7 @@ export function App() {
       });
       if (destination === "project") {
         setAssetScope("project");
+        setSmartCollection(null);
         setAssetFilter("all");
       }
       setMessage(destination === "project" ? `已关联 ${imported.length} 个素材到当前项目（未复制文件）` : `已关联 ${imported.length} 个本地素材`);
@@ -963,6 +1155,147 @@ export function App() {
     }));
   };
 
+  const saveProjectNotes = async () => {
+    if (!desktopApi || !selectedProject) return;
+    const updated = await desktopApi.updateProject({ id: selectedProject.id, patch: { notes: projectNotes } });
+    setData((current) => ({
+      ...current,
+      projects: current.projects.map((item) => (item.id === updated.id ? updated : item))
+    }));
+    setMessage("项目备注已保存");
+  };
+
+  const setCoverAsset = async (assetId: string) => {
+    if (!desktopApi || !selectedProject) return;
+    const updated = await desktopApi.updateProject({ id: selectedProject.id, patch: { coverAssetId: assetId } });
+    setData((current) => ({
+      ...current,
+      projects: current.projects.map((item) => (item.id === updated.id ? updated : item))
+    }));
+    setMessage("已设为项目封面");
+  };
+
+  const exportProjectCsv = async () => {
+    if (!desktopApi || !selectedProject) return;
+    setBusy(true);
+    try {
+      await desktopApi.exportProjectCsv(selectedProject.id);
+      setMessage("素材清单已导出");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "导出失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const relinkAsset = useCallback(async (asset: Asset) => {
+    if (!desktopApi) return;
+    const newPath = window.prompt(`重新指定文件路径:\n当前: ${asset.path}\n\n请输入新的完整文件路径:`);
+    if (!newPath?.trim()) return;
+    setBusy(true);
+    try {
+      const updated = await desktopApi.relinkAsset(asset.id, newPath.trim());
+      setData((current) => ({
+        ...current,
+        assets: current.assets.map((item) => (item.id === updated.id ? updated : item))
+      }));
+      setMessage(`已重新关联: ${updated.name}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "重新关联失败");
+    } finally {
+      setBusy(false);
+    }
+  }, [desktopApi]);
+
+  const findAndShowDuplicates = async () => {
+    if (!desktopApi) return;
+    setBusy(true);
+    try {
+      const groups = await desktopApi.findDuplicates();
+      setDuplicateGroups(groups);
+      setMessage(groups.length > 0 ? `发现 ${groups.length} 组重复素材` : "未发现重复素材");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "查找重复失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleSelectAsset = useCallback((id: string) => {
+    setSelectedAssetIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      return next;
+    });
+  }, []);
+
+  const clearSelection = () => setSelectedAssetIds(new Set());
+
+  const toggleAssetSelect = useCallback((id: string) => {
+    setSelectedAssetIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAllVisible = () => setSelectedAssetIds(new Set(visibleAssets.map((a) => a.id)));
+
+  const batchUnlinkSelected = async () => {
+    if (!desktopApi || selectedAssetIds.size === 0) return;
+    const confirmed = window.confirm(`取消关联选中的 ${selectedAssetIds.size} 个素材？\n本地文件不会被删除。`);
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      const result = await desktopApi.batchUnlink(Array.from(selectedAssetIds));
+      setSelectedAssetIds(new Set());
+      setMessage(`已取消关联 ${result.removedCount} 个素材`);
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "批量取消关联失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const batchTagSelected = async () => {
+    const tag = batchTagInput.trim();
+    if (!desktopApi || selectedAssetIds.size === 0 || !tag) return;
+    setBusy(true);
+    try {
+      const result = await desktopApi.batchAddTag(Array.from(selectedAssetIds), tag);
+      setBatchTagInput("");
+      setMessage(`已为 ${result.updatedCount} 个素材添加标签: ${tag}`);
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "批量打标签失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleEagleAutoSync = async () => {
+    if (!desktopApi) return;
+    const next = !eagleAutoSync;
+    await desktopApi.setEagleAutoSync(next);
+    setEagleAutoSync(next);
+    setMessage(next ? "Eagle 自动同步已开启（每 30 秒检测变化）" : "Eagle 自动同步已关闭");
+  };
+
+  const addToSearchHistory = (term: string) => {
+    if (!term.trim()) return;
+    setSearchHistory((prev) => {
+      const next = [term, ...prev.filter((h) => h !== term)].slice(0, 10);
+      return next;
+    });
+  };
+
+  const applySearch = (term: string) => {
+    setSearch(term);
+    setShowSearchHistory(false);
+    if (term) addToSearchHistory(term);
+  };
+
   const activePage = pageMeta[activeSection];
   const systemStatus = busy ? "正在处理本地操作" : isPending ? "正在切换视图" : desktopApi ? "桌面服务在线" : "浏览器预览模式";
 
@@ -1056,12 +1389,58 @@ export function App() {
           <NavItem active={activeSection === "settings"} icon={<Settings2 size={16} />} label="设置" meta={data.watchedFolders.length.toString()} onClick={() => openSection("settings")} />
         </nav>
 
+        <section className="smart-collections" aria-label="智能集合">
+          <div className="smart-collections-head">
+            <span>智能集合</span>
+            <strong>{data.assets.length}</strong>
+          </div>
+          <SmartCollectionButton
+            active={smartCollection === "recent"}
+            count={smartCollectionCounts.recent}
+            icon={<Clock3 size={13} />}
+            label="最近添加"
+            onClick={() => applySmartCollection("recent")}
+          />
+          <SmartCollectionButton
+            active={smartCollection === "highRated"}
+            count={smartCollectionCounts.highRated}
+            icon={<Star size={13} />}
+            label="高评分素材"
+            onClick={() => applySmartCollection("highRated")}
+          />
+          <SmartCollectionButton
+            active={smartCollection === "unassigned"}
+            count={smartCollectionCounts.unassigned}
+            icon={<Link2Off size={13} />}
+            label="未分配项目"
+            onClick={() => applySmartCollection("unassigned")}
+          />
+          <SmartCollectionButton
+            active={smartCollection === "broken"}
+            count={smartCollectionCounts.broken}
+            icon={<AlertTriangle size={13} />}
+            label="失效素材"
+            onClick={() => applySmartCollection("broken")}
+          />
+          <SmartCollectionButton
+            active={smartCollection === "frequent"}
+            count={smartCollectionCounts.frequent}
+            icon={<Layers size={13} />}
+            label="常用素材"
+            onClick={() => applySmartCollection("frequent")}
+          />
+        </section>
+
         <div className="side-footer">
           <span>状态</span>
           <strong>
             <CheckCircle2 size={13} />
             {desktopApi ? "本地服务运行中" : "等待桌面环境"}
           </strong>
+          <button className="theme-toggle" onClick={() => setThemeMode((current) => (current === "light" ? "dark" : "light"))} type="button">
+            {themeMode === "light" ? <Moon size={13} /> : <Sun size={13} />}
+            {themeMode === "light" ? "深色模式" : "浅色模式"}
+          </button>
         </div>
         <button
           aria-label="调整侧边栏宽度"
@@ -1123,9 +1502,10 @@ export function App() {
         {activeSection === "overview" ? (
           <section className="metric-strip">
             <MetricCard icon={<Clapperboard size={19} />} label="项目" value={data.projects.length.toString()} hint={`${activeProjects} 个进行中`} />
+            <MetricCard icon={<CalendarClock size={19} />} label="近截止" value={deadlineSoonProjects.toString()} hint="3 天内需要关注" />
             <MetricCard icon={<Library size={19} />} label="素材" value={data.assets.length.toString()} hint={formatSize(totalSize)} />
             <MetricCard icon={<Import size={19} />} label="今日入库" value={todayStats.totalCount.toString()} hint={formatSize(todayStats.totalSize)} />
-            <MetricCard icon={<FolderOpen size={19} />} label="外部文件夹" value={data.watchedFolders.length.toString()} hint="保持原位同步" />
+            <MetricCard icon={<AlertTriangle size={19} />} label="失效素材" value={brokenAssetCount.toString()} hint="断链或缺失路径" />
           </section>
         ) : null}
 
@@ -1162,7 +1542,12 @@ export function App() {
 
                 <div className="project-list">
                   {data.projects.length === 0 ? (
-                    <EmptyState title="还没有项目" body="创建第一个 AE 项目后，会自动生成标准目录并进入项目库。" />
+                    <EmptyState title="新建第一个项目" body="创建项目后会自动生成标准目录，并把关联素材沉淀到项目维度里。">
+                      <button className="empty-action-button" onClick={focusProjectCreator} type="button">
+                        <Plus size={14} />
+                        新建项目
+                      </button>
+                    </EmptyState>
                   ) : (
                     data.projects.map((project, index) => {
                       const isSelected = selectedProjectId === project.id;
@@ -1178,7 +1563,11 @@ export function App() {
                           onClick={() => selectProject(project.id)}
                           type="button"
                         >
-                          <span className={`status-dot ${statusTone[project.status]}`} aria-hidden="true" />
+                          {coverUrlById.get(project.id) ? (
+                            <img className="project-cover-thumb" src={coverUrlById.get(project.id)} alt="封面" />
+                          ) : (
+                            <span className={`status-dot ${statusTone[project.status]}`} aria-hidden="true" />
+                          )}
                           <div className="project-main">
                             <h3>{project.name}</h3>
                             <p>{project.deadline ? `截止 ${formatDate(project.deadline)}` : "未设置截止日期"}</p>
@@ -1228,6 +1617,10 @@ export function App() {
                           <FolderOpen size={15} />
                           打开目录
                         </button>
+                        <button className="quiet-button" onClick={exportProjectCsv} disabled={busy}>
+                          <FileDown size={15} />
+                          导出清单
+                        </button>
                       </div>
                     </div>
 
@@ -1236,6 +1629,22 @@ export function App() {
                       <MiniStat label="创建时间" value={formatDateTime(selectedProject.createdAt)} />
                       <MiniStat label="修改时间" value={formatDateTime(selectedProject.updatedAt)} />
                       <MiniStat label="最近打开" value={selectedProject.lastOpenedAt ? formatDateTime(selectedProject.lastOpenedAt) : "-"} />
+                    </div>
+
+                    <div className="project-notes-section">
+                      <div className="project-notes-head">
+                        <StickyNote size={13} />
+                        <span>项目备注</span>
+                      </div>
+                      <textarea
+                        aria-label="项目备注"
+                        className="project-notes-input"
+                        value={projectNotes}
+                        onChange={(e) => setProjectNotes(e.target.value)}
+                        onBlur={saveProjectNotes}
+                        placeholder="记录项目细节、参考链接或注意事项…"
+                        rows={3}
+                      />
                     </div>
 
                     <div className="project-assets-panel" data-asset-zoom-surface="true">
@@ -1267,7 +1676,17 @@ export function App() {
                           </div>
                           <div className="project-asset-grid" style={{ "--asset-card-min": `${assetCardMin}px` } as CSSProperties}>
                             {projectPreviewAssets.map((asset) => (
-                              <AssetCard asset={asset} key={asset.id} onPreview={setPreviewAsset} onUnlink={unlinkAsset} showPath />
+                              <div key={asset.id} className="project-asset-with-cover">
+                                <AssetCard asset={asset} onPreview={setPreviewAsset} onUnlink={unlinkAsset} projectCount={assetUsageCounts.get(asset.id) ?? 0} showPath />
+                                <button
+                                  className="set-cover-btn"
+                                  title="设为项目封面"
+                                  onClick={() => setCoverAsset(asset.id)}
+                                >
+                                  <Image size={11} />
+                                  {selectedProject.coverAssetId === asset.id ? "当前封面" : "设为封面"}
+                                </button>
+                              </div>
                             ))}
                           </div>
                           {selectedProjectAssets.length > projectPreviewAssets.length ? (
@@ -1306,10 +1725,19 @@ export function App() {
                     <span>筛选分类</span>
                     <strong>{filteredAssets.length} 个匹配素材</strong>
                   </div>
-                  <button className="filter-reset-button" onClick={resetAssetView} type="button">
-                    <RefreshCw size={13} />
-                    重置
-                  </button>
+                  <div className="filter-head-actions">
+                    {smartCollection ? (
+                      <button className="smart-active-chip" onClick={clearSmartCollection} type="button" title="清除智能集合">
+                        <Layers size={12} />
+                        {smartCollectionLabel[smartCollection]}
+                        <X size={11} />
+                      </button>
+                    ) : null}
+                    <button className="filter-reset-button" onClick={resetAssetView} type="button">
+                      <RefreshCw size={13} />
+                      重置
+                    </button>
+                  </div>
                 </div>
 
                 <div className="library-project-panel">
@@ -1473,8 +1901,33 @@ export function App() {
                   </div>
                 </div>
 
-                <div className="eagle-filter-panel" aria-label="Eagle 素材筛选">
-                  <div className="eagle-filter-head">
+                <div className="size-filter-panel" aria-label="文件大小筛选">
+                  <div className="time-filter-head">
+                    <div>
+                      <HardDrive size={14} />
+                      <span>大小筛选</span>
+                      <em>{hasActiveSizeFilter ? `${assetSizeMin || "0"} ~ ${assetSizeMax || "∞"} MB` : "全部大小"}</em>
+                    </div>
+                    {hasActiveSizeFilter ? (
+                      <button className="time-clear" onClick={() => { setAssetSizeMin(""); setAssetSizeMax(""); }} type="button">
+                        <X size={12} />
+                        清除
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="date-range-row">
+                    <label>
+                      <span>最小(MB)</span>
+                      <input type="number" min="0" step="1" value={assetSizeMin} onChange={(e) => setAssetSizeMin(e.target.value)} placeholder="0" />
+                    </label>
+                    <label>
+                      <span>最大(MB)</span>
+                      <input type="number" min="0" step="1" value={assetSizeMax} onChange={(e) => setAssetSizeMax(e.target.value)} placeholder="∞" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="eagle-filter-panel" aria-label="Eagle 素材筛选">                  <div className="eagle-filter-head">
                     <div>
                       <Database size={14} />
                       <span>Eagle 筛选</span>
@@ -1533,7 +1986,7 @@ export function App() {
                     <label>
                       <span>状态</span>
                       <select value={eagleStatusFilter} onChange={(event) => setEagleStatusFilter(event.target.value as EagleStatusFilter)}>
-                        {(["all", "active", "missing", "unavailable"] as EagleStatusFilter[]).map((status) => (
+                        {(["all", "active", "missing", "broken", "unavailable"] as EagleStatusFilter[]).map((status) => (
                           <option key={status} value={status}>
                             {eagleStatusLabel[status]}
                           </option>
@@ -1560,8 +2013,33 @@ export function App() {
               />
 
               <section className="library-content" aria-label="素材结果">
+                {selectedAssetIds.size > 0 ? (
+                  <div className="batch-toolbar">
+                    <span>
+                      <CheckSquare size={14} />
+                      已选 {selectedAssetIds.size} 个
+                    </span>
+                    <button onClick={selectAllVisible} type="button" title="全选当前页">全选</button>
+                    <button onClick={clearSelection} type="button" title="取消选择">取消</button>
+                    <div className="batch-tag-row">
+                      <input
+                        value={batchTagInput}
+                        onChange={(e) => setBatchTagInput(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && batchTagSelected()}
+                        placeholder="批量添加标签…"
+                      />
+                      <button onClick={batchTagSelected} disabled={!batchTagInput.trim() || busy} type="button">
+                        <Tags size={13} />
+                      </button>
+                    </div>
+                    <button className="danger-action" onClick={batchUnlinkSelected} disabled={busy} type="button">
+                      <Link2Off size={14} />
+                      批量取消关联
+                    </button>
+                  </div>
+                ) : null}
                 <div className="toolbar">
-                  <div className="search-box">
+                  <div className="search-box" style={{ position: "relative" }}>
                     <Search size={17} />
                     <input
                       aria-label="搜索文件名、路径、Eagle 标签或备注"
@@ -1569,8 +2047,30 @@ export function App() {
                       name="asset-search"
                       value={search}
                       onChange={(event) => setSearch(event.target.value)}
+                      onFocus={() => setShowSearchHistory(true)}
+                      onBlur={() => setTimeout(() => setShowSearchHistory(false), 150)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && search.trim()) { addToSearchHistory(search.trim()); setShowSearchHistory(false); } }}
                       placeholder="搜索文件名或路径…"
                     />
+                    {search ? (
+                      <button style={{ background: "none", border: "none", cursor: "pointer", padding: "0 4px", color: "var(--text-muted)" }} onClick={() => applySearch("")} title="清除搜索">
+                        <X size={13} />
+                      </button>
+                    ) : null}
+                    {showSearchHistory && searchHistory.length > 0 ? (
+                      <div className="search-history-dropdown">
+                        {searchHistory.map((term, i) => (
+                          <button key={i} className="search-history-item" onMouseDown={() => applySearch(term)}>
+                            <Clock3 size={12} />
+                            <span>{term}</span>
+                          </button>
+                        ))}
+                        <button className="search-history-clear" onMouseDown={() => setSearchHistory([])}>
+                          <X size={11} />
+                          清除历史
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="sort-control" aria-label="素材时间排序">
                     <ArrowUpDown size={15} />
@@ -1613,10 +2113,23 @@ export function App() {
                   style={{ "--asset-card-min": `${assetCardMin}px` } as CSSProperties}
                 >
                   {filteredAssets.length === 0 ? (
-                    <EmptyState title={emptyAssetTitle} body={emptyAssetBody} />
+                    <EmptyState title={emptyAssetTitle} body={emptyAssetBody}>
+                      {showAssetEmptyActions ? (
+                        <div className="empty-actions">
+                          <button className="empty-action-button" onClick={() => importAssets("linked")} type="button" disabled={busy}>
+                            <Import size={14} />
+                            导入本地素材
+                          </button>
+                          <button className="empty-action-button secondary" onClick={syncEagleLibrary} type="button" disabled={busy}>
+                            <Database size={14} />
+                            同步 Eagle
+                          </button>
+                        </div>
+                      ) : null}
+                    </EmptyState>
                   ) : (
                     visibleAssets.map((asset) => (
-                      <AssetCard asset={asset} key={asset.id} onPreview={previewAssetFromCard} onUnlink={unlinkAsset} showPath={assetScope === "project"} />
+                      <AssetCard asset={asset} key={asset.id} onPreview={previewAssetFromCard} onUnlink={unlinkAsset} onRelink={relinkAsset} onToggleSelect={toggleAssetSelect} isSelected={selectedAssetIds.has(asset.id)} projectCount={assetUsageCounts.get(asset.id) ?? 0} showPath={assetScope === "project"} />
                     ))
                   )}
                 </div>
@@ -1732,10 +2245,15 @@ export function App() {
                     <span>重新扫描</span>
                     <em>{data.watchedFolders.length + 2} 个根目录</em>
                   </button>
+                  <button className="setting-action" onClick={markMissingAssets} disabled={busy}>
+                    <AlertTriangle size={15} />
+                    <span>检测失效</span>
+                    <em>{brokenAssetCount} 个已标记</em>
+                  </button>
                   <button className="setting-action danger-lite" onClick={pruneMissingAssets} disabled={busy}>
                     <Trash2 size={15} />
-                    <span>清理失效</span>
-                    <em>{data.assets.length} 条记录</em>
+                    <span>清理记录</span>
+                    <em>移除断链素材</em>
                   </button>
                 </div>
               </section>
@@ -1773,6 +2291,7 @@ export function App() {
                 <StatLine label="人物" value={todayStats.characterCount} />
                 <StatLine label="参考" value={todayStats.referenceCount} />
                 <StatLine label="AE" value={todayStats.aeCount} />
+                <StatLine label="其他" value={todayStats.otherCount} />
               </div>
               <div className="bar-chart">
                 {recentStats.map((item) => (
@@ -1827,7 +2346,7 @@ export function App() {
         </section>
       </section>
 
-      {previewAsset ? <PreviewModal asset={previewAsset} onClose={() => setPreviewAsset(null)} /> : null}
+      {previewAsset ? <PreviewModal asset={previewAsset} onClose={() => setPreviewAsset(null)} references={previewAssetReferences} /> : null}
     </main>
   );
 
@@ -1855,6 +2374,28 @@ function NavItem({ active, icon, label, meta, onClick }: { active?: boolean; ico
       {icon}
       <span>{label}</span>
       {meta ? <strong aria-hidden="true">{meta}</strong> : null}
+    </button>
+  );
+}
+
+function SmartCollectionButton({
+  active,
+  count,
+  icon,
+  label,
+  onClick
+}: {
+  active: boolean;
+  count: number;
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button aria-pressed={active} className={active ? "smart-collection active" : "smart-collection"} onClick={onClick} type="button">
+      {icon}
+      <span>{label}</span>
+      <strong>{count}</strong>
     </button>
   );
 }
@@ -1937,11 +2478,19 @@ const AssetCard = memo(function AssetCard({
   asset,
   onPreview,
   onUnlink,
+  onRelink,
+  onToggleSelect,
+  isSelected,
+  projectCount = 0,
   showPath
 }: {
   asset: Asset;
   onPreview: (asset: Asset) => void;
   onUnlink: (asset: Asset) => void;
+  onRelink?: (asset: Asset) => void;
+  onToggleSelect?: (id: string) => void;
+  isSelected?: boolean;
+  projectCount?: number;
   showPath?: boolean;
 }) {
   const isImage = asset.type === "image" || asset.type === "character" || asset.type === "reference";
@@ -1952,8 +2501,15 @@ const AssetCard = memo(function AssetCard({
   const primaryFolder = asset.eagleFolderNames?.[0];
   const primaryTags = asset.tags?.slice(0, 2) ?? [];
 
+  const isMissingLocal = isBrokenAsset(asset);
+
   return (
-    <article className="asset-card">
+    <article className={`asset-card ${isSelected ? "is-selected" : ""} ${isMissingLocal ? "is-missing" : ""}`}>
+      {onToggleSelect ? (
+        <button className="asset-checkbox" aria-label="选择此素材" aria-pressed={isSelected} onClick={() => onToggleSelect(asset.id)} type="button">
+          {isSelected ? <CheckSquare size={15} /> : <div className="asset-checkbox-empty" />}
+        </button>
+      ) : null}
       <button
         aria-label={`${isVideo ? "播放预览" : "预览"} ${asset.name}`}
         className={`asset-preview ${isImage ? "image-surface" : ""} ${isVideo ? "video-surface" : ""}`}
@@ -2008,12 +2564,21 @@ const AssetCard = memo(function AssetCard({
             {asset.sourceStatus && asset.sourceStatus !== "active" ? <span className="asset-status-warn">{eagleStatusLabel[asset.sourceStatus]}</span> : null}
           </div>
         ) : null}
+        {projectCount > 0 ? (
+          <div className="asset-meta-row asset-reference-row">
+            <span>
+              <Link2 size={11} />
+              被 {projectCount} 个项目引用
+            </span>
+          </div>
+        ) : null}
         {showPath ? (
           <p className="asset-path" title={asset.path}>
             <FolderOpen size={12} />
             <span>{asset.path}</span>
           </p>
         ) : null}
+        {isMissingLocal ? <span className="asset-missing-badge"><AlertTriangle size={11} />{asset.sourceStatus === "broken" ? "断链" : "文件缺失"}</span> : null}
         <div className="asset-actions">
           <button aria-label="打开素材" onClick={() => window.aeManager?.openAsset(asset.id)} title="打开素材">
             {asset.type === "video" ? <Play size={14} /> : <Eye size={14} />}
@@ -2021,6 +2586,11 @@ const AssetCard = memo(function AssetCard({
           <button aria-label="定位文件" onClick={() => window.aeManager?.revealAsset(asset.id)} title="定位文件">
             <FolderOpen size={14} />
           </button>
+          {isMissingLocal && onRelink ? (
+            <button aria-label="修复断链" className="relink-action" onClick={() => onRelink(asset)} title="重新选择文件路径">
+              <Link2 size={14} />
+            </button>
+          ) : null}
           <button aria-label="取消关联" className="danger-action" onClick={() => onUnlink(asset)} title="取消关联">
             <Link2Off size={14} />
           </button>
@@ -2030,7 +2600,7 @@ const AssetCard = memo(function AssetCard({
   );
 });
 
-function PreviewModal({ asset, onClose }: { asset: Asset; onClose: () => void }) {
+function PreviewModal({ asset, onClose, references }: { asset: Asset; onClose: () => void; references: AssetProjectReference[] }) {
   const url = safeAssetUrl(asset.path);
   const posterUrl = asset.thumbnailPath ? safeAssetUrl(asset.thumbnailPath) : "";
   const isImage = asset.type === "image" || asset.type === "character" || asset.type === "reference";
@@ -2054,6 +2624,30 @@ function PreviewModal({ asset, onClose }: { asset: Asset; onClose: () => void })
           {isVideo && url ? <video src={url} poster={posterUrl || undefined} controls autoPlay muted loop playsInline /> : null}
           {!isImage && !isVideo ? <div className="preview-fallback">该文件类型暂无内嵌预览</div> : null}
         </div>
+        <section className="asset-reference-panel" aria-label="素材引用项目">
+          <div className="asset-reference-head">
+            <Link2 size={14} />
+            <span>被以下项目引用</span>
+            <strong>{references.length}</strong>
+          </div>
+          {references.length === 0 ? (
+            <p className="asset-reference-empty">尚未关联到任何项目。</p>
+          ) : (
+            <div className="asset-reference-list">
+              {references.map((reference) => (
+                <article className="asset-reference-item" key={`${reference.project.id}:${reference.usageType}:${reference.createdAt}`}>
+                  <span className={`status-dot ${statusTone[reference.project.status]}`} aria-hidden="true" />
+                  <div>
+                    <strong>{reference.project.name}</strong>
+                    <em>
+                      {statusLabel[reference.project.status]} / {typeLabel[(reference.usageType as AssetType) ?? "misc"] ?? reference.usageType} / {formatDate(reference.createdAt)}
+                    </em>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       </section>
     </div>
   );
@@ -2141,12 +2735,13 @@ const VideoPreview = memo(function VideoPreview({ src, poster, name }: { src: st
   );
 });
 
-function EmptyState({ title, body }: { title: string; body: string }) {
+function EmptyState({ title, body, children }: { title: string; body: string; children?: ReactNode }) {
   return (
     <div className="empty-state">
       <ListChecks size={28} />
       <h3>{title}</h3>
       <p>{body}</p>
+      {children}
     </div>
   );
 }
@@ -2162,10 +2757,45 @@ function createEmptyStats(date: string): DailyAssetStats {
     characterCount: 0,
     referenceCount: 0,
     aeCount: 0,
+    otherCount: 0,
     totalSize: 0,
     createdAt: date,
     updatedAt: date
   };
+}
+
+function matchesSmartCollectionFilter(
+  asset: Asset,
+  collection: SmartCollectionId,
+  context: {
+    assetProjectIds: Map<string, Set<string>>;
+    frequentAssetIds: Set<string>;
+    recentCollectionStart: number;
+  }
+) {
+  if (collection === "recent") return isRecentAsset(asset, context.recentCollectionStart);
+  if (collection === "highRated") return (asset.rating ?? 0) >= 4;
+  if (collection === "unassigned") return !context.assetProjectIds.get(asset.id)?.size;
+  if (collection === "broken") return isBrokenAsset(asset);
+  return context.frequentAssetIds.has(asset.id);
+}
+
+function isRecentAsset(asset: Asset, startTime: number) {
+  const createdAt = new Date(asset.createdAt).getTime();
+  return Number.isFinite(createdAt) && createdAt >= startTime;
+}
+
+function isBrokenAsset(asset: Asset) {
+  return asset.sourceStatus === "broken" || asset.sourceStatus === "missing";
+}
+
+function isDeadlineSoon(project: Project) {
+  if (!project.deadline || project.status === "finished" || project.status === "archived") return false;
+  const deadline = parseDateInputEnd(project.deadline);
+  if (deadline === undefined) return false;
+  const now = Date.now();
+  const threeDays = 3 * 24 * 60 * 60 * 1000;
+  return deadline >= now && deadline <= now + threeDays;
 }
 
 function resolveAssetTimeRange(preset: AssetTimePreset, from: string, to: string) {
@@ -2214,6 +2844,7 @@ function matchesRatingFilter(rating: number | undefined, filter: EagleRatingFilt
   if (filter === "rated") return (rating ?? 0) > 0;
   return (rating ?? 0) >= Number(filter);
 }
+
 
 function formatTimeFilterSummary(preset: AssetTimePreset, from: string, to: string) {
   if (preset === "today") return "今天";

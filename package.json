@@ -1,6 +1,6 @@
 {
   "name": "ae-workbench",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A local desktop workstation for After Effects project and asset management.",
   "private": true,
   "author": "Saidyo",
@@ -17,7 +17,7 @@
   "scripts": {
     "dev": "concurrently \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && tsc -p tsconfig.electron.json && electron .\"",
     "build": "tsc -p tsconfig.electron.json && vite build",
-    "dist:win": "npm run build && electron-builder --win zip --x64",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
     "pack:win": "npm run build && electron-builder --win dir --x64",
     "typecheck": "tsc --noEmit"
   },
@@ -36,13 +36,21 @@
     "win": {
       "target": [
         {
-          "target": "zip",
+          "target": "nsis",
           "arch": [
             "x64"
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+      "artifactName": "${productName} Setup ${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AE Workbench"
     }
   },
   "dependencies": {

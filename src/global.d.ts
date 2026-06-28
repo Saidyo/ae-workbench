@@ -13,15 +13,25 @@ declare global {
       revealAsset: (id: string) => Promise<boolean>;
       unlinkAsset: (id: string) => Promise<Asset>;
       rescanAssets: () => Promise<{ addedCount: number }>;
+      markMissingAssets: () => Promise<{ markedCount: number; restoredCount: number; brokenCount: number }>;
       pruneMissingAssets: () => Promise<{ removedAssets: number; removedProjectLinks: number }>;
       unlinkWatchedFolder: (folderPath: string) => Promise<{ folderPath: string; removedCount: number }>;
       checkEagleConnection: () => Promise<EagleConnectionStatus>;
       selectEagleLibrary: () => Promise<EagleSource | null>;
       syncEagleLibrary: (input?: { sourceId?: string }) => Promise<{ source: EagleSource; run: EagleSyncRun }>;
       unlinkEagleSource: (sourceId: string) => Promise<{ source: EagleSource; removedCount: number }>;
+      relinkAsset: (id: string, newPath: string) => Promise<Asset>;
+      findDuplicates: () => Promise<Asset[][]>;
+      batchUnlink: (ids: string[]) => Promise<{ removedCount: number }>;
+      batchAddTag: (ids: string[], tag: string) => Promise<{ updatedCount: number }>;
+      exportProjectCsv: (projectId: string) => Promise<boolean>;
+      setEagleAutoSync: (enabled: boolean) => Promise<boolean>;
       assetUrl: (filePath: string) => string;
       onSyncChanged: (
         callback: (payload: { reason: "file-added" | "file-removed"; path: string; at: string }) => void
+      ) => () => void;
+      onEagleAutoSynced: (
+        callback: (payload: { addedCount: number; updatedCount: number }) => void
       ) => () => void;
     };
   }
