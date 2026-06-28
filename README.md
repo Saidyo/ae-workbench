@@ -3,20 +3,31 @@
 [![CI](https://github.com/Saidyo/ae-workbench/actions/workflows/ci.yml/badge.svg)](https://github.com/Saidyo/ae-workbench/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-AE Workbench 是一个面向 After Effects 创作者的本地桌面工作台，用来统一管理 AE 项目、人物立绘、图片素材、视频素材、音频、PSD、模板、交付文件和 Eagle 素材库信息。
+AE Workbench 是一个面向 After Effects 创作者的本地桌面工作台，也是一层轻量的「项目记忆层」：它帮你记住每个项目引用了哪些素材、哪些素材曾经用在哪些项目里，以及素材库最近发生了什么变化。
 
 它的设计目标是“本地优先”：素材仍然留在你的电脑里，系统只记录文件路径、分类、标签、时间、项目关联和预览信息，不会上传素材，也不会移动或修改 Eagle 原始文件。
 
 ![AE Workbench 界面预览](docs/images/ae-workbench-overview.png)
 
+## 最新版本
+
+当前版本：`0.3.0`
+
+Windows 用户可以直接下载 GitHub Release 中的安装器：
+
+[下载 AE Workbench 0.3.0](https://github.com/Saidyo/ae-workbench/releases/tag/v0.3.0)
+
 ## 功能特性
 
 - 创建并管理 AE 项目目录。
 - 索引 `Library/`、`Projects/` 和外部关联文件夹中的本地素材。
-- 在素材库中直接预览图片和视频。
+- 在素材库中直接预览图片和视频，长图、竖图和横图都能完整查看。
 - 将文件或文件夹关联到指定 AE 项目。
+- 在素材详情中查看“被哪些项目引用”，把素材和项目关系串起来。
 - 将素材导入当前项目，并按素材类型归入对应目录。
-- 统计每日入库数量和最近素材增长趋势。
+- 通过智能集合快速查看最近添加、高评分、未分配、失效和常用素材。
+- 统计每日入库数量，并修复 PSD、模板、其他类型的统计守恒。
+- 对本地索引做原子写入、备份回滚和断链检测，降低数据损坏风险。
 - 支持通过 Eagle 本地 API 或手动选择 `.library` 文件夹同步 Eagle 信息。
 - Eagle 同步保持只读，不写回、不移动、不删除、不复制 Eagle 原始文件。
 
@@ -114,7 +125,7 @@ node_modules/
 | --- | --- |
 | `npm run dev` | 启动 Vite 和 Electron 开发环境 |
 | `npm run build` | 构建 Electron 主进程和前端界面 |
-| `npm run dist:win` | 生成 Windows 绿色版发布压缩包 |
+| `npm run dist:win` | 生成 Windows NSIS 安装器 |
 | `npm run typecheck` | 运行 TypeScript 类型检查 |
 
 ## 文档
